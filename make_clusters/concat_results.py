@@ -1,7 +1,10 @@
 import os
 import math
 import glob
+import re
+import pickle
 import argparse
+
 
 def num_to_binary(num, max_num=15):
     num_digits = int(math.log2(max_num)) + 1
@@ -11,42 +14,40 @@ def num_to_binary(num, max_num=15):
         num >>= 1
     return ''.join(l)
 
-def process_file(fname, output_fname, file_idx, max_f_idx, label_start_idx):
-    path_prefix = num_to_binary(file_idx, max_f_idx)
-    num_labels = 0
+def process_file(fname, output_fname, dict_idx, tree_idx, partition_idx, max_partition):
+    path_prefix = num_to_binary(partition_idx, max_partition)
     with open(output_fname, 'a') as f_out:
         with open(fname, 'r') as f_in:
-            for line in f_in:
-                label, l_path = line.split(',')[:2]
-                label = str(label_start_idx + int(label))
+            for label, line in zip(dict_idx[tree_idx][partition_idx], f_in):
+                _, l_path = line.split(',')[:2]
+                label = str(label)
                 l_path = path_prefix + l_path.strip()
                 f_out.write(label + ',' + l_path + '\n')
-                num_labels += 1
-    return label_start_idx + num_labels
 
-def main(fpath, output_fpath):
+def main(fpath, idx_fpath, output_fpath):
+    re_str = fpath.replace('[0-9]*', '(\d+)')
     filenames = glob.glob(fpath)
-    idx_left = fpath.rfind('[0-9]*')
-    idx_right =  (idx_left + 6) - len(fpath)
     num_files = len(filenames)
-
     filenames = sorted([
-        (int(filename[idx_left:idx_right]), filename )
+        (tuple(int(k) for k in re.search(re_str, filename).group(1,2)),
+        filename)
         for filename in filenames])
-    label_start_idx = 0
-    for f_idx, filename in filenames:
-        label_start_idx = process_file(
-                filename, output_fpath, f_idx, len(filenames) - 1, label_start_idx)
+    with open(idx_fpath, 'rb') as handle:
+        dict_idx = pickle.load(handle)
+    n_trees, n_partitions = filenames[-1][0][0] + 1, filenames[-1][0][1] + 1
 
-
-
+    for (tree_idx, partition_idx), filename in filenames:
+        process_file(
+            filename, output_fpath.format(tree_idx), dict_idx, tree_idx, partition_idx,n_partitions - 1
+        )
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('-fname', type=str, default='tree_partitioned/cl[0-9]*.txt')
-    parser.add_argument('-output', type=str, default='hsfmx_tree/bert_clusters.txt')
+    parser.add_argument('-fname', type=str, default='tree_partitioned/tree[0-9]*_partition[0-9]*.txt')
+    parser.add_argument('-idx_filename', type=str, default='tree_partitioned/indices.pickle')
+    parser.add_argument('-output', type=str, default='hsfmx_trees/tree{}.txt')
     options = parser.parse_args()
     dir_chr_idx = options.output.rfind('/')
     if dir_chr_idx > 0:
         os.makedirs(options.output[:dir_chr_idx], exist_ok=True)
-    main(options.fname, options.output)
+    main(options.fname, options.idx_filename, options.output)

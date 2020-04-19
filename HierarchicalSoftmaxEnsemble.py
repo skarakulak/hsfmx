@@ -87,6 +87,7 @@ class HierarchicalSoftmaxEnsemble(nn.Module):
                    torch.tensor(v[1]).float().to(self.device))
                 for k, v in self.labels2path_labels[i].items()
             }
+        self.linear.to(device)
 
     def pred_label_single_hsfmx(self, pred, path_idx, p2t, start_ind=0):
         current_node=0

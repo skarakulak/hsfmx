@@ -1,2 +1,6 @@
 notebooks/MNIST/MNIST_data
+*transformers_cache
+*__pycache__/
+*.ipynb_checkpoints/
+make_clusters/tree_partitioned/
 

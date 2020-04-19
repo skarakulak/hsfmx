@@ -252,7 +252,7 @@ def gmm_clustering(df_vals, save_file, verbose=0):
 
         terminals = t.get_terminal(t.root)
 
-    if verbose > -1:
+    if verbose > 0:
         # Print final number of leaves, should be the same as the size of the vocabulary
         print('Final number of leaves: {}'.format(len(terminals)))
         print('Size of vocabulary: {}'.format(len(vecs)))
@@ -263,7 +263,7 @@ def gmm_clustering(df_vals, save_file, verbose=0):
         if c in node_codes:
             node_codes.remove(c)
 
-    if verbose > -1:
+    if verbose > 0:
         print('Number of internal nodes: {}'.format(len(node_codes)))
 
     # Enumerate node codes
@@ -273,7 +273,7 @@ def gmm_clustering(df_vals, save_file, verbose=0):
 
     # Compute mean code word lenghts
     code_lengths = [len(node['code']) for node in terminals]
-    if verbose > -1:
+    if verbose > 0:
         print('Mean code word length: {}'.format(np.mean(code_lengths)))
 
     save_code_words(terminals, nodes_to_index, save_file)

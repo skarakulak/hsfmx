@@ -90,6 +90,7 @@ class HierarchicalSoftmaxEnsemble(nn.Module):
         self.linear.to(device)
 
     def pred_label_single_hsfmx(self, pred, path_idx, p2t, start_ind=0):
+        # TODO: implement beam search
         current_node=0
         current_path = []
         cur_node_path_idx = [0]

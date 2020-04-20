@@ -18,9 +18,9 @@ def process_file(fname, output_fname, dict_idx, tree_idx, partition_idx, max_par
     path_prefix = num_to_binary(partition_idx, max_partition)
     with open(output_fname, 'a') as f_out:
         with open(fname, 'r') as f_in:
-            for label, line in zip(dict_idx[tree_idx][partition_idx], f_in):
-                _, l_path = line.split(',')[:2]
-                label = str(label)
+            for line in f_in:
+                l_label, l_path = line.split(',')[:2]
+                label = str(dict_idx[tree_idx][partition_idx][int(l_label)])
                 l_path = path_prefix + l_path.strip()
                 f_out.write(label + ',' + l_path + '\n')
 
@@ -43,8 +43,8 @@ def main(fpath, idx_fpath, output_fpath):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('-fname', type=str, default='tree_partitioned/tree[0-9]*_partition[0-9]*.txt')
-    parser.add_argument('-idx_filename', type=str, default='tree_partitioned/indices.pickle')
+    parser.add_argument('-fname', type=str, default='trees_partitioned/tree[0-9]*_partition[0-9]*.txt')
+    parser.add_argument('-idx_filename', type=str, default='trees_partitioned/indices.pickle')
     parser.add_argument('-output', type=str, default='hsfmx_trees/tree{}.txt')
     options = parser.parse_args()
     dir_chr_idx = options.output.rfind('/')

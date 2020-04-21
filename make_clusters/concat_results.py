@@ -43,11 +43,15 @@ def main(fpath, idx_fpath, output_fpath):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('-fname', type=str, default='trees_partitioned/tree[0-9]*_partition[0-9]*.txt')
-    parser.add_argument('-idx_filename', type=str, default='trees_partitioned/indices.pickle')
-    parser.add_argument('-output', type=str, default='hsfmx_trees/tree{}.txt')
+    parser.add_argument('-input_folder', type=str, default='trees_partitioned')
+    parser.add_argument('-output_folder', type=str, default='hsfmx_trees')
+    parser.add_argument('-input_file_pattern', type=str, default='tree[0-9]*_partition[0-9]*.txt')
+    parser.add_argument('-idx_filename', type=str, default='indices.pickle')
+    parser.add_argument('-output_file_pattern', type=str, default='tree{}.txt')
     options = parser.parse_args()
-    dir_chr_idx = options.output.rfind('/')
-    if dir_chr_idx > 0:
-        os.makedirs(options.output[:dir_chr_idx], exist_ok=True)
-    main(options.fname, options.idx_filename, options.output)
+    os.makedirs(options.output_folder, exist_ok=True)
+    main(
+        os.path.join(options.input_folder, options.input_file_pattern),
+        os.path.join(options.input_folder, options.idx_filename),
+        os.path.join(options.output_folder, options.output_file_pattern)
+    )

@@ -1,10 +1,12 @@
-notebooks/MNIST/MNIST_data
-*transformers_cache
 *__pycache__/
+*.py[cod]
+*$py.class
 *.ipynb_checkpoints/
 */logs/
+*.swp
 *.out
 *.err
-make_clusters/tree_partitioned/
-make_clusters/trees_partitioned/
-make_clusters/trees_partitioned_sampled/
+*build_trees/trees_partitioned*
+*notebooks/MNIST/MNIST_data*
+MNIST/MNIST_data
+*transformers_cache

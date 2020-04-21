@@ -2,8 +2,9 @@ notebooks/MNIST/MNIST_data
 *transformers_cache
 *__pycache__/
 *.ipynb_checkpoints/
-make_clusters/tree_partitioned/
 */logs/
 *.out
 *.err
-
+make_clusters/tree_partitioned/
+make_clusters/trees_partitioned/
+make_clusters/trees_partitioned_sampled/

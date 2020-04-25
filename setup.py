@@ -12,6 +12,6 @@ setup(
         url='http://github.com/skarakulak/hsfmx',
         packages=['hsfmx'],
         zip_safe=False,
-        install_requires=['numpy'],
+        #install_requires=['numpy'],
         python_requires=">=3.6.0",
         )

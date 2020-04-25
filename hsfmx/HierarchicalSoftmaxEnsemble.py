@@ -46,9 +46,9 @@ class HierarchicalSoftmaxEnsemble(nn.Module):
         self.labels2path_labels_combined = {}
         self.trees_path = trees_path
         if device is None:
-            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            self.__device = 'cuda' if torch.cuda.is_available() else 'cpu'
         else:
-            self.device = device
+            self.__device = device
 
         self.read_trees(trees_path)
         self.linear = nn.Linear(input_dim, self.num_paths * self.num_hsfmx)
@@ -57,8 +57,8 @@ class HierarchicalSoftmaxEnsemble(nn.Module):
         for path in glob.glob(trees_path):
             labels_hier_idx, num_of_paths, path_idx, p2t = get_label_hierarchy(path)
             labels_hier_idx = {
-                k:(torch.tensor(v[0]).long().to(device),
-                   torch.tensor(v[1]).float().to(device))
+                k:(torch.tensor(v[0]).long().to(self.__device),
+                   torch.tensor(v[1]).float().to(self.__device))
                 for k,v in labels_hier_idx.items()
             }
             self.labels2path_labels.append(labels_hier_idx)
@@ -80,14 +80,16 @@ class HierarchicalSoftmaxEnsemble(nn.Module):
             self.labels2path_labels_combined[k] = (comb_idx, comb_labels)
 
     def to(self, device):
-        self.device = device
+        self.__device = device
+        super().to(device)
         for i in range(len(self.labels2path_labels)):
             self.labels2path_labels[i] = {
-                k:(torch.tensor(v[0]).long().to(self.device),
-                   torch.tensor(v[1]).float().to(self.device))
+                k:(torch.tensor(v[0]).long().to(self.__device),
+                   torch.tensor(v[1]).float().to(self.__device))
                 for k, v in self.labels2path_labels[i].items()
             }
         self.linear.to(device)
+        return self
 
     def pred_label_single_hsfmx(self, pred, path_idx, p2t, start_ind=0):
         # TODO: implement beam search
@@ -107,7 +109,7 @@ class HierarchicalSoftmaxEnsemble(nn.Module):
             self.pred_label_single_hsfmx(row, path_idx, p2t, k * self.num_paths)
             for row in output
             for k, (path_idx, p2t) in enumerate(zip(self.path_indices, self.path2label))
-        ]).long().to(self.device).reshape(output.size(0), self.num_hsfmx)
+        ]).long().to(self.__device).reshape(output.size(0), self.num_hsfmx)
         return pred.mode(dim=1)[0] if get_mode else pred
 
     def forward(self, x, target=None, collect_paths=True, pred_labels=False, pred_labels__get_mode=True):

@@ -216,7 +216,7 @@ def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args) -> T
     return inputs, labels
 
 
-def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedTokenizer) -> Tuple[int, float]:
+def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, fix_transformer=False) -> Tuple[int, float]:
     """ Train the model """
     if args.local_rank in [-1, 0]:
         tb_writer = SummaryWriter()
@@ -250,7 +250,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             "weight_decay": args.weight_decay,
         },
         {"params": [p for n, p in model.named_parameters() if any(nd in n for nd in no_decay)], "weight_decay": 0.0},
-    ]
+    ] if not fix_transformer else model.hsfmx.parameters()
     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
     scheduler = get_linear_schedule_with_warmup(
         optimizer, num_warmup_steps=args.warmup_steps, num_training_steps=t_total
@@ -320,7 +320,8 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
 
     model.zero_grad()
     train_iterator = trange(
-        epochs_trained, int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0]
+        epochs_trained, int(args.num_train_epochs) if not fix_transformer else args.epochs_train_hsfmx,
+        desc="Epoch", disable=args.local_rank not in [-1, 0]
     )
     set_seed(args)  # Added here for reproducibility
     for epoch in train_iterator:
@@ -340,6 +341,8 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
             inputs = inputs.to(args.device)
             labels = labels.to(args.device)
             model.train()
+            # TODO: using `calc_log_prob` gives better perplexity, but doubles the training time.
+            # optimize the implementation
             outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
 
@@ -450,7 +453,12 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
         labels = labels.to(args.device)
 
         with torch.no_grad():
-            outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
+            if args.hsfmx:
+                outputs = model(inputs, masked_lm_labels=labels, calc_log_prob=True)
+            elif args.mlm:
+                outputs = model(inputs, masked_lm_labels=labels, )
+            else:
+                outputs = model(inputs, labels=labels)
             lm_loss = outputs[0]
             eval_loss += lm_loss.mean().item()
         nb_eval_steps += 1
@@ -557,6 +565,7 @@ def main():
     parser.add_argument(
         "--evaluate_during_training", action="store_true", help="Run evaluation during training at each logging step."
     )
+    parser.add_argument("--epochs_train_hsfmx", default=10, type=int, help="How many epochs to train the hsfmx for before fine-tuning the whole model.")
 
     parser.add_argument("--per_gpu_train_batch_size", default=4, type=int, help="Batch size per GPU/CPU for training.")
     parser.add_argument(
@@ -756,51 +765,19 @@ def main():
         if args.local_rank == 0:
             torch.distributed.barrier()
 
+        if args.epochs_train_hsfmx:
+            global_step, tr_loss = train(args, train_dataset, model, tokenizer, fix_transformer=True)
         global_step, tr_loss = train(args, train_dataset, model, tokenizer)
         logger.info(" global_step = %s, average loss = %s", global_step, tr_loss)
 
-    # Saving best-practices: if you use save_pretrained for the model and tokenizer, you can reload them using from_pretrained()
-    if args.do_train and (args.local_rank == -1 or torch.distributed.get_rank() == 0):
-        # Create output directory if needed
-        if args.local_rank in [-1, 0]:
-            os.makedirs(args.output_dir, exist_ok=True)
-
-        logger.info("Saving model checkpoint to %s", args.output_dir)
-        # Save a trained model, configuration and tokenizer using `save_pretrained()`.
-        # They can then be reloaded using `from_pretrained()`
-        model_to_save = (
-            model.module if hasattr(model, "module") else model
-        )  # Take care of distributed/parallel training
-        model_to_save.save_pretrained(args.output_dir)
-        tokenizer.save_pretrained(args.output_dir)
-
-        # Good practice: save your training arguments together with the trained model
-        torch.save(args, os.path.join(args.output_dir, "training_args.bin"))
-
-        # Load a trained model and vocabulary that you have fine-tuned
-        model = AutoModelWithLMHead.from_pretrained(args.output_dir)
-        tokenizer = AutoTokenizer.from_pretrained(args.output_dir)
-        model.to(args.device)
+        torch.save(model, os.path.join(args.output_dir, "model.pkl"))
 
     # Evaluation
     results = {}
     if args.do_eval and args.local_rank in [-1, 0]:
-        checkpoints = [args.output_dir]
-        if args.eval_all_checkpoints:
-            checkpoints = list(
-                os.path.dirname(c) for c in sorted(glob.glob(args.output_dir + "/**/" + WEIGHTS_NAME, recursive=True))
-            )
-            logging.getLogger("transformers.modeling_utils").setLevel(logging.WARN)  # Reduce logging
-        logger.info("Evaluate the following checkpoints: %s", checkpoints)
-        for checkpoint in checkpoints:
-            global_step = checkpoint.split("-")[-1] if len(checkpoints) > 1 else ""
-            prefix = checkpoint.split("/")[-1] if checkpoint.find("checkpoint") != -1 else ""
-
-            model = AutoModelWithLMHead.from_pretrained(checkpoint)
-            model.to(args.device)
-            result = evaluate(args, model, tokenizer, prefix=prefix)
-            result = dict((k + "_{}".format(global_step), v) for k, v in result.items())
-            results.update(result)
+        result = evaluate(args, model, tokenizer, prefix='')
+        result = dict((k + "_{}".format(global_step), v) for k, v in result.items())
+        results.update(result)
 
     return results
 

@@ -139,6 +139,7 @@ class BertForMaskedLM_hsfmx(BertPreTrainedModel):
         encoder_hidden_states=None,
         encoder_attention_mask=None,
         lm_labels=None,
+        calc_log_prob=False,
     ):
         r"""
         masked_lm_labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`, defaults to :obj:`None`):
@@ -194,7 +195,27 @@ class BertForMaskedLM_hsfmx(BertPreTrainedModel):
         if masked_lm_labels is not None:
             loss_fct = nn.BCEWithLogitsLoss(reduction='sum')
             idx = masked_lm_labels != -100
+            target = masked_lm_labels[idx]
             output_hsfmx, target_hsfmx = self.hsfmx(
-                sequence_output[idx], masked_lm_labels[idx])
+                sequence_output[idx], target)
+
             masked_lm_loss = loss_fct(output_hsfmx, target_hsfmx)
-            return (masked_lm_loss / idx.sum(), )
+
+            outputs = (masked_lm_loss / idx.sum(),)
+
+            if calc_log_prob:
+                bce = nn.BCEWithLogitsLoss(reduction='none')
+                loss_bce = bce(output_hsfmx, target_hsfmx)
+                start = 0
+                total_logp = 0
+                for l in target.tolist():
+                    prob = 0
+                    for l2p_per_tree in self.hsfmx.labels2path_labels:
+                        len_path = l2p_per_tree[l][0].shape[0]
+                        prob += torch.exp(-torch.sum(loss_bce[start: start + len_path]))
+                        start += len_path
+                    prob /= self.hsfmx.num_hsfmx
+                    total_logp += torch.log(prob)
+                outputs = (-total_logp / target.shape[0],) + outputs
+
+            return outputs

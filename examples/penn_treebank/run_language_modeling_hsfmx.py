@@ -28,7 +28,7 @@ import pickle
 import random
 import re
 import shutil
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
 import torch
@@ -64,6 +64,18 @@ logger = logging.getLogger(__name__)
 MODEL_CONFIG_CLASSES = list(MODEL_WITH_LM_HEAD_MAPPING.keys())
 MODEL_TYPES = tuple(conf.model_type for conf in MODEL_CONFIG_CLASSES)
 
+
+def read_pkl(path):
+    assert os.path.isfile(path), f'file does not exist: {path}'
+    with open(path, 'rb') as handle:
+        obj = pickle.load(handle)
+    return obj
+
+
+def map2new_idx(labels, new_idx_mapping):
+    return torch.Tensor([
+        [i if i == -100 else new_idx_mapping[i] if i in new_idx_mapping else 0 for i in row]
+        for row in labels.tolist()]).long().to(labels.device)
 
 class TextDataset(Dataset):
     def __init__(self, tokenizer: PreTrainedTokenizer, args, file_path: str, block_size=512):
@@ -182,7 +194,8 @@ def _rotate_checkpoints(args, checkpoint_prefix="checkpoint", use_mtime=False) -
         shutil.rmtree(checkpoint)
 
 
-def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args) -> Tuple[torch.Tensor, torch.Tensor]:
+def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args, new_idx_mapping: Optional[dict]=None
+        ) -> Tuple[torch.Tensor, torch.Tensor]:
     """ Prepare masked tokens inputs/labels for masked language modeling: 80% MASK, 10% random, 10% original. """
 
     if tokenizer.mask_token is None:
@@ -211,6 +224,8 @@ def mask_tokens(inputs: torch.Tensor, tokenizer: PreTrainedTokenizer, args) -> T
     indices_random = torch.bernoulli(torch.full(labels.shape, 0.5)).bool() & masked_indices & ~indices_replaced
     random_words = torch.randint(len(tokenizer), labels.shape, dtype=torch.long)
     inputs[indices_random] = random_words[indices_random]
+    if args.idx_mapping_path is not None:
+        labels = map2new_idx(labels, new_idx_mapping)
 
     # The rest of the time (10% of the time) we keep the masked input tokens unchanged
     return inputs, labels
@@ -222,6 +237,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
         tb_writer = SummaryWriter()
 
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
+    new_idx_mapping = None if args.idx_mapping_path is None else read_pkl(args.idx_mapping_path)
 
     def collate(examples: List[torch.Tensor]):
         if tokenizer._pad_token is None:
@@ -337,7 +353,7 @@ def train(args, train_dataset, model: PreTrainedModel, tokenizer: PreTrainedToke
                 steps_trained_in_current_epoch -= 1
                 continue
 
-            inputs, labels = mask_tokens(batch, tokenizer, args) if args.mlm else (batch, batch)
+            inputs, labels = mask_tokens(batch, tokenizer, args, new_idx_mapping) if args.mlm else (batch, batch)
             inputs = inputs.to(args.device)
             labels = labels.to(args.device)
             model.train()
@@ -418,6 +434,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
     eval_output_dir = args.output_dir
 
     eval_dataset = load_and_cache_examples(args, tokenizer, evaluate=True)
+    new_idx_mapping = None if args.idx_mapping_path is None else read_pkl(args.idx_mapping_path)
 
     if args.local_rank in [-1, 0]:
         os.makedirs(eval_output_dir, exist_ok=True)
@@ -448,7 +465,7 @@ def evaluate(args, model: PreTrainedModel, tokenizer: PreTrainedTokenizer, prefi
     model.eval()
 
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
-        inputs, labels = mask_tokens(batch, tokenizer, args) if args.mlm else (batch, batch)
+        inputs, labels = mask_tokens(batch, tokenizer, args, new_idx_mapping) if args.mlm else (batch, batch)
         inputs = inputs.to(args.device)
         labels = labels.to(args.device)
 
@@ -526,7 +543,12 @@ def main():
         type=str,
         help="path of the trees to construct hsfmx"
     )
-
+    parser.add_argument(
+        "--idx_mapping_path",
+        type=str,
+        default=None,
+        help="given a path, reads the mapping to original tokens to the selected (most frequent) tokens, and applies it"
+    )
     parser.add_argument(
         "--mlm", action="store_true", help="Train with masked-language modeling loss instead of language modeling."
     )
@@ -736,7 +758,7 @@ def main():
                 config,
                 trees_path=args.trees_path,
                 device=args.device
-        )
+    )
     elif args.model_name_or_path:
         model = AutoModelWithLMHead.from_pretrained(
             args.model_name_or_path,

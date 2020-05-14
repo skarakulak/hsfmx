@@ -3,19 +3,44 @@
 
 
 import argparse
+import numpy as np
 import os
 import pickle
-import random
-from tqdm import tqdm
 import pandas as pd
-import numpy as np
+import pickle
+import random
 import torch
+from tqdm import tqdm
 from gmm_tree import gmm_clustering
-
 from transformers import AutoConfig, AutoModelWithLMHead
 
-def main(save_dir, transformers_cache_dir, sample_cols):
-    model_name = 'bert-base-cased'
+
+def read_pkl(path):
+    assert os.path.isfile(path), f'file does not exist: {path}'
+    with open(path, 'rb') as handle:
+        obj = pickle.load(handle)
+    return obj
+
+
+def get_weights_w_mapping(idx_mapping_path, weights):
+    most_freq_idx_dict = read_pkl(idx_mapping_path)
+    idx2new_idx = {e: i for i, e in most_freq_idx_dict.items() if e != 0}
+    new_num_tokens = len(idx2new_idx) + 1
+
+    w_mostfreq = weights.loc[[idx2new_idx[i] for i in range(1, new_num_tokens)]]
+    w_unknown_tokens_mean = pd.DataFrame(weights[~weights.index.isin(
+        [idx2new_idx[i] for i in range(1, new_num_tokens)]
+    )].mean(axis=0)).T
+
+    w_new = pd.concat([
+        w_unknown_tokens_mean,
+        w_mostfreq
+    ]).reset_index(drop=True)
+    return w_new
+
+
+def main(save_dir, transformers_cache_dir, n_trees, col_sample_proportion, idx_mapping_path=None):
+    model_name = 'bert-base-uncased'
     model = AutoModelWithLMHead.from_pretrained(
         model_name,
         from_tf=bool(".ckpt" in model_name),
@@ -24,51 +49,39 @@ def main(save_dir, transformers_cache_dir, sample_cols):
         cache_dir=transformers_cache_dir
     )
 
-    corr_path = os.path.join(save_dir, 'corr_matrix.pkl')
-    if os.path.isfile(corr_path):
-        print('> loading the correlation matrix')
-        with open(corr_path, 'rb') as handle:
-            corr_df = pickle.load(handle)
-    else:
-        print('> building the correlation matrix')
-        corr_df = pd.DataFrame.corr(pd.DataFrame(model.cls.predictions.decoder.weight.cpu().detach().numpy().T))
-        with open(corr_path, 'wb') as handle:
-            pickle.dump(corr_df, handle, protocol=pickle.HIGHEST_PROTOCOL)
+    weights = pd.DataFrame(model.cls.predictions.decoder.weight.cpu().detach().numpy())
 
-    print(corr_df.shape)
+    if idx_mapping_path is not None:
+        weights = get_weights_w_mapping(idx_mapping_path, weights)
 
     print('> creating the trees')
-    n_trees = 50
-    n_partitions = 16
-    cuts = np.linspace(0, corr_df.shape[0], n_partitions + 1).astype(int)
-    idx = np.arange(corr_df.shape[0])
-    idx_dict = {}
+    idx = np.arange(weights.shape[1])
     pbar = tqdm(range(n_trees))
     for i in pbar:
         np.random.shuffle(idx)
-        idx_dict_tree = {}
-        for j in range(n_partitions):
-            pbar.set_description_str(f'(tree:{i} | partition:{j})')
-            idx_dict_tree[j] = idx[cuts[j]:cuts[j + 1]].copy()
-            gmm_clustering(
-                    corr_df.iloc[idx_dict_tree[j]].reset_index(drop=True)
-                    if not sample_cols else
-                    corr_df.iloc[idx_dict_tree[j], idx_dict_tree[j]].reset_index(drop=True),
-                    os.path.join(save_dir, f'tree{i}_partition{j}.txt')
-                    )
-        idx_dict[i] = idx_dict_tree
+        pbar.set_description_str(f'(tree:{i})')
+        cols = idx[: int(idx.shape[0] * col_sample_proportion)]
+        gmm_clustering(
+                weights.iloc[:, cols],
+                os.path.join(save_dir, f'tree{i}.txt')
+                )
         pbar.update(1)
 
-    with open(os.path.join(save_dir, 'indices.pickle'), 'wb') as handle:
-        pickle.dump(idx_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('-save_dir', type=str, default='trees_partitioned')
+    parser.add_argument('-save_dir', type=str, default='hsfmx_trees')
     parser.add_argument('-transformers_cache_dir', type=str, default='transformers_cache')
-    parser.add_argument('-sample_cols', action='store_true')
+    parser.add_argument('-n_trees', type=int, default=50)
+    parser.add_argument('-col_sample_proportion', type=float, default=0.90)
+    parser.add_argument('-idx_mapping_path', type=str, default=None)
     options = parser.parse_args()
-    dir_chr_idx = options.save_dir.rfind('/')
-    if dir_chr_idx > 0:
-        os.makedirs(options.save_dir[:dir_chr_idx], exist_ok=True)
-    main(options.save_dir, options.transformers_cache_dir, options.sample_cols)
+    if not os.path.isdir(options.save_dir):
+        os.makedirs(options.save_dir)
+    main(
+        options.save_dir,
+        options.transformers_cache_dir,
+        options.n_trees,
+        options.col_sample_proportion,
+        options.idx_mapping_path,
+    )
